@@ -1,0 +1,5 @@
+{
+  "name": "CONTROL DE STOCK COMEXA",
+  "description": "Inventory management platform for corrective maintenance in Alarms and CCTV, managing IDC and Executor stock levels.",
+  "requestFramePermissions": []
+}
