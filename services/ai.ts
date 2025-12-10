@@ -22,8 +22,8 @@ const reportSchema = {
           quantity: { type: Type.NUMBER, description: "Cantidad utilizada." },
           item_category: { 
             type: Type.STRING, 
-            enum: ["Material o refacción", "Equipo instalado"],
-            description: "Clasificación del item: 'Material o refacción' para consumibles/partes, 'Equipo instalado' para dispositivos principales."
+            enum: ["Suministro", "Instalación", "Suministro e instalación"],
+            description: "Clasificación del item: 'Suministro' (solo entrega), 'Instalación' (solo mano de obra/montaje), 'Suministro e instalación' (ambos)."
           }
         }
       }
@@ -46,9 +46,10 @@ export const extractDataFromReport = async (fileBase64: string, mimeType: string
       Reglas Específicas:
       1. **Identificadores:** Busca SCTASK, REQO y el **Folio Comexa**.
       2. **Sucursal (SIRH):** Busca el identificador de la sucursal. En los reportes suele aparecer etiquetado como "SIRH", "Ceco", "ID" o muy comúnmente como "**# de sucursal**". Extrae ese valor numérico o alfanumérico.
-      3. **Items:** Extrae la lista de materiales. Clasifica CADA item en una de estas dos categorías:
-         - "Material o refacción": Para cables, conectores, baterías, tornillos, tubería, etc.
-         - "Equipo instalado": Para cámaras, grabadores (DVR/NVR), paneles de alarma, sensores, teclados, etc.
+      3. **Items:** Extrae la lista de materiales. Clasifica CADA item en una de estas categorías:
+         - "Suministro": Si solo se entregó el material.
+         - "Instalación": Si solo se instaló material existente.
+         - "Suministro e instalación": Si se proveyó e instaló.
       4. **Fechas:** Conviértelas estrictamente al formato ISO YYYY-MM-DD.
       5. Si no encuentras un valor, déjalo vacío.
     `;

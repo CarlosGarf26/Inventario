@@ -1,4 +1,3 @@
-// ... (imports remain the same)
 import React, { useState, useEffect } from 'react';
 import { LayoutDashboard, Box, ClipboardList, Settings, AlertCircle, History, ShieldCheck, ArrowRightLeft, PieChart } from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
@@ -9,9 +8,9 @@ import { InstallationHistory } from './components/InstallationHistory';
 import { StockAssignment } from './components/StockAssignment';
 import { ExecutiveReport } from './components/ExecutiveReport'; // New Import
 import { IdcSelector } from './components/IdcSelector';
-import { parseStockFile, parseTechnicianFile, parseBranchFile } from './services/parser';
-import { StockItem, Technician, Branch, InstallationLog } from './types';
-import { OWNER_EXECUTOR, STOCK_OVERRIDES } from './constants';
+import { parseStockFile, parseTechnicianFile, parseBranchFile, parseServiceConcentrate, parseCatalogExcel } from './services/parser';
+import { StockItem, Technician, Branch, InstallationLog, DeviceCatalog } from './types';
+import { OWNER_EXECUTOR, STOCK_OVERRIDES, DEVICE_CATALOG } from './constants';
 import { read, utils } from 'xlsx';
 
 enum Tab {
@@ -29,7 +28,8 @@ const STORAGE_KEYS = {
   STOCK: 'comexa_stock',
   TECHS: 'comexa_techs',
   BRANCHES: 'comexa_branches',
-  LOGS: 'comexa_logs'
+  LOGS: 'comexa_logs',
+  CATALOG: 'comexa_catalog'
 };
 
 const App: React.FC = () => {
@@ -56,10 +56,18 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : [];
   });
 
+  // Device Catalog State (Initialized with hardcoded constants, then override with localStorage)
+  const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalog>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.CATALOG);
+    // If saved exists, use it. Otherwise use the default constant.
+    return saved ? JSON.parse(saved) : DEVICE_CATALOG;
+  });
+
   // Upload Logic State
   const [showIdcSelector, setShowIdcSelector] = useState(false);
   // Store Files instead of Content string to handle multiples later
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
+  // We no longer strictly need pendingUploadType for logic, but might use it for UI titles
   const [pendingUploadType, setPendingUploadType] = useState<'IDC' | 'EXECUTOR' | null>(null);
   
   // Notifications
@@ -81,6 +89,10 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(logs));
   }, [logs]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.CATALOG, JSON.stringify(deviceCatalog));
+  }, [deviceCatalog]);
 
 
   useEffect(() => {
@@ -105,12 +117,11 @@ const App: React.FC = () => {
     }
   };
 
-  const handleFileUpload = async (files: File[], type: 'EXECUTOR' | 'IDC_STOCK' | 'TECHS' | 'BRANCHES') => {
+  const handleFileUpload = async (files: File[], type: 'IDC_STOCK' | 'TECHS' | 'BRANCHES' | 'SERVICES' | 'CATALOG') => {
     try {
       showNotify(`Procesando ${files.length} archivo(s)...`, 'success');
 
       switch (type) {
-        case 'EXECUTOR':
         case 'IDC_STOCK':
           if (technicians.length === 0) {
             showNotify("Debes cargar la Lista de Técnicos antes de subir stock para poder asignar el nombre.", 'error');
@@ -118,7 +129,7 @@ const App: React.FC = () => {
           }
           // Store files and wait for Owner Selection
           setPendingUploadFiles(files);
-          setPendingUploadType(type === 'EXECUTOR' ? 'EXECUTOR' : 'IDC');
+          setPendingUploadType('IDC'); // Generic Label
           setShowIdcSelector(true);
           break;
 
@@ -145,6 +156,28 @@ const App: React.FC = () => {
           }
           setBranches(allBranches);
           showNotify(`Cargadas ${allBranches.length} sucursales desde ${files.length} archivos`, 'success');
+          break;
+
+        case 'SERVICES':
+          let allLogs: InstallationLog[] = [];
+          for (const file of files) {
+            const content = await readFileContent(file);
+            const newLogs = parseServiceConcentrate(content);
+            allLogs = [...allLogs, ...newLogs];
+          }
+          setLogs(prev => [...prev, ...allLogs]);
+          showNotify(`Importados ${allLogs.length} registros históricos de servicios`, 'success');
+          break;
+
+        case 'CATALOG':
+          if (files.length > 0) {
+            // Only process the first file for Catalog as it should contain all sheets
+            const catalog = await parseCatalogExcel(files[0]);
+            // Merge with existing or overwrite? Let's overwrite specific keys found in file, keep others.
+            setDeviceCatalog(prev => ({ ...prev, ...catalog }));
+            const clientsFound = Object.keys(catalog).join(', ');
+            showNotify(`Catálogo actualizado para: ${clientsFound}`, 'success');
+          }
           break;
       }
     } catch (e) {
@@ -173,11 +206,10 @@ const App: React.FC = () => {
         // Logic: Remove previous stock for THIS specific owner if it exists, then add new (merged from all files)
         setStock(prev => [...prev.filter(i => i.owner !== effectiveOwner), ...allNewItems]);
         
-        const typeLabel = pendingUploadType === 'EXECUTOR' ? 'Ejecutor' : 'IDC';
         if (wasRedirected) {
           showNotify(`Cargados ${allNewItems.length} items. Redireccionado de ${selectedName} a ${effectiveOwner}`, 'success');
         } else {
-          showNotify(`Cargados ${allNewItems.length} items totales para ${typeLabel}: ${effectiveOwner}`, 'success');
+          showNotify(`Cargados ${allNewItems.length} items para: ${effectiveOwner}`, 'success');
         }
       } catch (e) {
         showNotify("Error al procesar los archivos de stock", 'error');
@@ -187,6 +219,27 @@ const App: React.FC = () => {
       }
     }
   };
+
+  // --- Logic for Manual Technician Add ---
+  const handleAddTechnician = (name: string, type: 'NOMINA' | 'EJECUTOR') => {
+    const normalizedName = name.trim().toUpperCase();
+    
+    // Check for duplicates
+    if (technicians.some(t => t.name.toUpperCase() === normalizedName)) {
+      showNotify(`El técnico "${normalizedName}" ya existe en la lista.`, 'error');
+      return;
+    }
+
+    const newTech: Technician = {
+      id: `tech-manual-${Date.now()}`,
+      name: normalizedName,
+      type: type
+    };
+
+    setTechnicians(prev => [...prev, newTech]);
+    showNotify(`${type === 'EJECUTOR' ? 'Ejecutor' : 'Técnico'} "${normalizedName}" agregado correctamente.`, 'success');
+  };
+  // -------------------------------------
 
   const handleInstallationSave = (log: InstallationLog, newStock: StockItem[]) => {
     setLogs(prev => [log, ...prev]);
@@ -217,7 +270,7 @@ const App: React.FC = () => {
 
     let updatedStock = [...stock];
     let transferredCount = 0;
-    const logItems: { device: string; model: string; quantity: number; usageType: 'Material o refacción' | 'Equipo instalado' }[] = [];
+    const logItems: { device: string; model: string; quantity: number; usageType: 'Instalación' | 'Suministro' | 'Suministro e instalación' }[] = [];
 
     itemsToTransfer.forEach(transfer => {
       // Find Source Item
@@ -260,7 +313,7 @@ const App: React.FC = () => {
            device: sourceItem.device,
            model: sourceItem.model,
            quantity: qty,
-           usageType: 'Material o refacción' // Default generic type for transfers
+           usageType: 'Suministro' // Default generic type for transfers
         });
       }
     });
@@ -278,7 +331,9 @@ const App: React.FC = () => {
       branchSirh: 'ALMACEN',
       branchRegion: 'ALMACEN CENTRAL',
       installationDate: new Date().toISOString().split('T')[0],
-      itemsUsed: logItems
+      itemsUsed: logItems,
+      warrantyApplied: false,
+      warrantyReason: 'Transferencia de Stock'
     };
 
     setLogs(prev => [transferLog, ...prev]);
@@ -339,8 +394,10 @@ const App: React.FC = () => {
         device: newItem.device,
         model: newItem.model,
         quantity: newItem.quantity,
-        usageType: 'Material o refacción'
-      }]
+        usageType: 'Suministro'
+      }],
+      warrantyApplied: false,
+      warrantyReason: 'Ingreso Directo / Compra'
     };
 
     setLogs(prev => [directLog, ...prev]);
@@ -356,17 +413,19 @@ const App: React.FC = () => {
   // -----------------------------------------
 
   const handleResetData = () => {
-    if (window.confirm('⚠️ ADVERTENCIA DE SEGURIDAD ⚠️\n\n¿Estás seguro de que quieres BORRAR TODA LA BASE DE DATOS?\n\nEsta acción eliminará permanentemente:\n- Todo el Inventario (Stock)\n- Lista de Técnicos\n- Directorio de Sucursales\n- Historial de Instalaciones\n\nEsta acción NO se puede deshacer.')) {
+    if (window.confirm('⚠️ ADVERTENCIA DE SEGURIDAD ⚠️\n\n¿Estás seguro de que quieres BORRAR TODA LA BASE DE DATOS?\n\nEsta acción eliminará permanentemente:\n- Todo el Inventario (Stock)\n- Lista de Técnicos\n- Directorio de Sucursales\n- Historial de Instalaciones\n- Catálogo de Dispositivos\n\nEsta acción NO se puede deshacer.')) {
       if (window.confirm('¿Confirmas definitivamente que deseas eliminar todos los datos y reiniciar el sistema desde cero?')) {
         localStorage.removeItem(STORAGE_KEYS.STOCK);
         localStorage.removeItem(STORAGE_KEYS.TECHS);
         localStorage.removeItem(STORAGE_KEYS.BRANCHES);
         localStorage.removeItem(STORAGE_KEYS.LOGS);
+        localStorage.removeItem(STORAGE_KEYS.CATALOG);
 
         setStock([]);
         setTechnicians([]);
         setBranches([]);
         setLogs([]);
+        setDeviceCatalog(DEVICE_CATALOG); // Reset to default hardcoded
         
         setActiveTab(Tab.DASHBOARD);
         showNotify("El sistema se ha reiniciado correctamente. Todos los datos han sido borrados.", 'success');
@@ -380,7 +439,8 @@ const App: React.FC = () => {
       stock,
       technicians,
       branches,
-      logs
+      logs,
+      deviceCatalog
     };
     
     const jsonString = JSON.stringify(backupData, null, 2);
@@ -410,6 +470,7 @@ const App: React.FC = () => {
         setTechnicians(data.technicians || []);
         setBranches(data.branches || []);
         setLogs(data.logs || []);
+        setDeviceCatalog(data.deviceCatalog || DEVICE_CATALOG);
         showNotify("Respaldo restaurado correctamente.", 'success');
       }
     } catch (e) {
@@ -488,6 +549,7 @@ const App: React.FC = () => {
                fullStock={stock} 
                onTransfer={handleTransferStock}
                onDirectAdd={handleDirectAddStock}
+               deviceCatalog={deviceCatalog}
              />
           )}
           {activeTab === Tab.INSTALLATION && (
@@ -503,6 +565,7 @@ const App: React.FC = () => {
           {activeTab === Tab.UPLOAD && (
             <DataUpload 
               onFileUpload={handleFileUpload} 
+              onAddTechnician={handleAddTechnician}
               onReset={handleResetData}
               onExportBackup={handleExportBackup}
               onRestoreBackup={handleRestoreBackup}
@@ -516,7 +579,7 @@ const App: React.FC = () => {
         onClose={() => setShowIdcSelector(false)}
         onSelect={handleOwnerSelected}
         technicians={technicians}
-        title={pendingUploadType === 'EXECUTOR' ? 'Asignar Stock de Ejecutor' : 'Asignar Stock de IDC'}
+        title={pendingUploadType === 'EXECUTOR' ? 'Asignar Stock de Ejecutor' : 'Asignar Stock a Personal'}
       />
     </div>
   );

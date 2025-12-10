@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { InstallationLog } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Printer, FileSpreadsheet, TrendingUp, MapPin, Briefcase } from 'lucide-react';
+import { Printer, FileSpreadsheet, TrendingUp, MapPin, Briefcase, Filter } from 'lucide-react';
 import { Button } from './ui/Button';
+import { CLIENTS } from '../constants';
 
 interface ExecutiveReportProps {
   logs: InstallationLog[];
@@ -12,24 +13,62 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'
 
 export const ExecutiveReport: React.FC<ExecutiveReportProps> = ({ logs }) => {
   
-  // --- Data Aggregation ---
+  // --- Filters State ---
+  const [filterClient, setFilterClient] = useState<string>('');
+  const [filterStartDate, setFilterStartDate] = useState<string>('');
+  const [filterEndDate, setFilterEndDate] = useState<string>('');
+  const [filterTech, setFilterTech] = useState<string>('');
+
+  // Extract unique technicians for the filter dropdown
+  const uniqueTechs = useMemo(() => {
+    return Array.from(new Set(logs.map(l => l.technicianName))).sort();
+  }, [logs]);
+
+  // --- Filter Logic ---
+  const filteredLogs = useMemo(() => {
+    return logs.filter(log => {
+      // 1. Client Filter (Checking if log has client-specific fields or inferring from branch name if possible, 
+      // but strictly we use the fields present. Since we don't store 'client' directly in log root, we infer)
+      // Inference: Banamex has SCTASK, Banregio has Ticket, Santander has SBO.
+      let matchesClient = true;
+      if (filterClient) {
+        if (filterClient === CLIENTS.BANAMEX) matchesClient = !!log.sctask;
+        else if (filterClient === CLIENTS.BANREGIO) matchesClient = !!log.ticket;
+        else if (filterClient === CLIENTS.SANTANDER) matchesClient = !!log.sbo;
+      }
+
+      // 2. Date Filter
+      let matchesDate = true;
+      if (filterStartDate) matchesDate = matchesDate && log.installationDate >= filterStartDate;
+      if (filterEndDate) matchesDate = matchesDate && log.installationDate <= filterEndDate;
+
+      // 3. Tech Filter
+      let matchesTech = true;
+      if (filterTech) matchesTech = log.technicianName === filterTech;
+
+      return matchesClient && matchesDate && matchesTech;
+    });
+  }, [logs, filterClient, filterStartDate, filterEndDate, filterTech]);
+
+
+  // --- Data Aggregation (Using filteredLogs) ---
 
   // 1. Installations by Region
   const regionData = useMemo(() => {
     const map = new Map<string, number>();
-    logs.forEach(log => {
+    filteredLogs.forEach(log => {
        const region = log.branchRegion || 'SIN REGION';
        map.set(region, (map.get(region) || 0) + 1);
     });
     return Array.from(map.entries())
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [logs]);
+  }, [filteredLogs]);
 
   // 2. Material Cost (Quantity) by Region
   const materialByRegionData = useMemo(() => {
     const map = new Map<string, number>();
-    logs.forEach(log => {
+    filteredLogs.forEach(log => {
        const region = log.branchRegion || 'SIN REGION';
        const totalItems = log.itemsUsed.reduce((sum, item) => sum + item.quantity, 0);
        map.set(region, (map.get(region) || 0) + totalItems);
@@ -37,19 +76,19 @@ export const ExecutiveReport: React.FC<ExecutiveReportProps> = ({ logs }) => {
     return Array.from(map.entries())
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [logs]);
+  }, [filteredLogs]);
 
   // 3. Top Technicians (Efficiency)
   const topTechnicians = useMemo(() => {
     const map = new Map<string, number>();
-    logs.forEach(log => {
+    filteredLogs.forEach(log => {
       map.set(log.technicianName, (map.get(log.technicianName) || 0) + 1);
     });
     return Array.from(map.entries())
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
-  }, [logs]);
+  }, [filteredLogs]);
 
 
   // --- Export Functions ---
@@ -59,10 +98,10 @@ export const ExecutiveReport: React.FC<ExecutiveReportProps> = ({ logs }) => {
   };
 
   const handleExcelExport = () => {
-    const headers = ["Región", "Sucursal", "Fecha Instalación", "Folio Comexa", "Técnico", "Total Items"];
+    const headers = ["Región", "Sucursal", "Fecha Instalación", "Folio Comexa", "Técnico", "Garantía", "Total Items"];
     
     // Create rows optimized for management reading
-    const rows = logs.map(log => {
+    const rows = filteredLogs.map(log => {
       const totalItems = log.itemsUsed.reduce((sum, item) => sum + item.quantity, 0);
       return [
         `"${log.branchRegion || 'N/A'}"`,
@@ -70,6 +109,7 @@ export const ExecutiveReport: React.FC<ExecutiveReportProps> = ({ logs }) => {
         log.installationDate,
         `"${log.folioComexa}"`,
         `"${log.technicianName}"`,
+        `"${log.warrantyApplied ? 'SI' : 'NO'}"`,
         totalItems
       ].join(',');
     });
@@ -106,6 +146,62 @@ export const ExecutiveReport: React.FC<ExecutiveReportProps> = ({ logs }) => {
         </div>
       </div>
 
+      {/* FILTER BAR (Hidden on Print) */}
+      <div className="bg-[#27548A]/40 p-4 rounded-lg border border-[#DDA853]/20 print:hidden">
+         <h3 className="text-[#DDA853] font-bold text-sm mb-3 flex items-center gap-2">
+            <Filter size={16} /> Filtros del Reporte
+         </h3>
+         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+             {/* Client Filter */}
+             <div>
+               <label className="block text-xs text-[#DDA853]/70 mb-1">Cliente</label>
+               <select 
+                 className="w-full bg-[#1E406A] border border-[#DDA853]/30 rounded p-2 text-[#DDA853] text-sm outline-none"
+                 value={filterClient}
+                 onChange={e => setFilterClient(e.target.value)}
+               >
+                 <option value="">Todos los Clientes</option>
+                 {Object.values(CLIENTS).map(c => <option key={c} value={c}>{c}</option>)}
+               </select>
+             </div>
+
+             {/* Tech Filter */}
+             <div>
+               <label className="block text-xs text-[#DDA853]/70 mb-1">Técnico (IDC)</label>
+               <select 
+                 className="w-full bg-[#1E406A] border border-[#DDA853]/30 rounded p-2 text-[#DDA853] text-sm outline-none"
+                 value={filterTech}
+                 onChange={e => setFilterTech(e.target.value)}
+               >
+                 <option value="">Todos los Técnicos</option>
+                 {uniqueTechs.map(t => <option key={t} value={t}>{t}</option>)}
+               </select>
+             </div>
+
+             {/* Date Start */}
+             <div>
+               <label className="block text-xs text-[#DDA853]/70 mb-1">Desde</label>
+               <input 
+                 type="date" 
+                 className="w-full bg-[#1E406A] border border-[#DDA853]/30 rounded p-2 text-[#DDA853] text-sm outline-none"
+                 value={filterStartDate}
+                 onChange={e => setFilterStartDate(e.target.value)}
+               />
+             </div>
+
+             {/* Date End */}
+             <div>
+               <label className="block text-xs text-[#DDA853]/70 mb-1">Hasta</label>
+               <input 
+                 type="date" 
+                 className="w-full bg-[#1E406A] border border-[#DDA853]/30 rounded p-2 text-[#DDA853] text-sm outline-none"
+                 value={filterEndDate}
+                 onChange={e => setFilterEndDate(e.target.value)}
+               />
+             </div>
+         </div>
+      </div>
+
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 print:grid-cols-3">
         <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-600 print:border-gray-400">
@@ -113,7 +209,7 @@ export const ExecutiveReport: React.FC<ExecutiveReportProps> = ({ logs }) => {
             <Briefcase className="text-blue-600" size={24} />
             <h3 className="text-gray-600 font-bold uppercase text-sm">Total Instalaciones</h3>
           </div>
-          <p className="text-4xl font-bold text-gray-800">{logs.length}</p>
+          <p className="text-4xl font-bold text-gray-800">{filteredLogs.length}</p>
         </div>
         
         <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-[#DDA853] print:border-gray-400">
@@ -130,7 +226,7 @@ export const ExecutiveReport: React.FC<ExecutiveReportProps> = ({ logs }) => {
             <h3 className="text-gray-600 font-bold uppercase text-sm">Material Total (Pzas)</h3>
           </div>
           <p className="text-4xl font-bold text-gray-800">
-             {logs.reduce((acc, log) => acc + log.itemsUsed.reduce((sum, item) => sum + item.quantity, 0), 0)}
+             {filteredLogs.reduce((acc, log) => acc + log.itemsUsed.reduce((sum, item) => sum + item.quantity, 0), 0)}
           </p>
         </div>
       </div>

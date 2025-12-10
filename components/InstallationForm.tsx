@@ -1,9 +1,9 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { StockItem, Technician, Branch, InstallationLog } from '../types';
 import { Button } from './ui/Button';
-import { Plus, Trash2, Save, Search, Building, MapPin, Hash, Sparkles, Upload, Loader2, FileText, Settings2, Globe } from 'lucide-react';
+import { Plus, Trash2, Save, Search, Building, MapPin, Hash, Sparkles, Loader2, FileText, Settings2, Globe, CheckCircle2, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { extractDataFromReport } from '../services/ai';
-import { STOCK_OVERRIDES } from '../constants';
+import { STOCK_OVERRIDES, CLIENTS } from '../constants';
 
 interface InstallationFormProps {
   technicians: Technician[];
@@ -15,19 +15,28 @@ interface InstallationFormProps {
 interface SelectedItem {
   stockId: string;
   quantityToUse: number;
-  usageType: 'Material o refacción' | 'Equipo instalado';
+  usageType: 'Instalación' | 'Suministro' | 'Suministro e instalación';
 }
 
 export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians, branches, stock, onSave }) => {
+  // State for the main Client Selector
+  const [selectedClientType, setSelectedClientType] = useState<string>(''); // 'BANAMEX', 'BANREGIO', 'SANTANDER'
+
   const [formData, setFormData] = useState({
     sctask: '',
     reqo: '',
-    folioComexa: '', // Nuevo campo
+    ticket: '', // Banregio specific
+    sbo: '',    // Santander specific
+    folioComexa: '', // GLOBAL CMX
     technicianId: '',
     reportDate: new Date().toISOString().split('T')[0],
     branchId: '',
     installDate: new Date().toISOString().split('T')[0],
   });
+
+  // Warranty State
+  const [warrantyApplied, setWarrantyApplied] = useState<boolean | null>(null);
+  const [warrantyReason, setWarrantyReason] = useState<string>('');
 
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [itemSearch, setItemSearch] = useState('');
@@ -37,10 +46,9 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Logic for Branch Filtering ---
-  const [clientFilter, setClientFilter] = useState('');
   const [branchSearch, setBranchSearch] = useState('');
 
-  // Extract unique clients for the dropdown
+  // Extract unique clients for the dropdown (in case they want to override manually)
   const uniqueClients = useMemo(() => {
     const clients = new Set(branches.map(b => b.client).filter(Boolean));
     return Array.from(clients).sort();
@@ -49,8 +57,8 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
   // Filter branches based on Client and SIRH/Name search
   const filteredBranches = useMemo(() => {
     return branches.filter(b => {
-      // 1. Filter by Client
-      const matchClient = clientFilter ? b.client === clientFilter : true;
+      // 1. Filter by Client (Driven by the top menu now)
+      const matchClient = selectedClientType ? b.client === selectedClientType : true;
       
       // 2. Filter by SIRH or Name (Search text)
       const query = branchSearch.toLowerCase();
@@ -60,7 +68,7 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
 
       return matchClient && matchSearch;
     });
-  }, [branches, clientFilter, branchSearch]);
+  }, [branches, selectedClientType, branchSearch]);
   // ----------------------------------
 
   // Helper to determine who the stock should actually come from
@@ -76,7 +84,6 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
   };
 
   // Derived state for the item selector
-  // Shows stock belonging to the technician OR their supervisor (if overridden) OR Generic Executor
   const availableStock = useMemo(() => {
     const effectiveOwner = getEffectiveStockOwner(formData.technicianId);
     
@@ -130,7 +137,7 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
     // 1. Map simple fields
     if (data.sctask) updates.sctask = data.sctask;
     if (data.reqo) updates.reqo = data.reqo;
-    if (data.folio_comexa) updates.folioComexa = data.folio_comexa; // Mapear Folio Comexa
+    if (data.folio_comexa) updates.folioComexa = data.folio_comexa;
     if (data.report_date) updates.reportDate = data.report_date;
     if (data.installation_date) updates.installDate = data.installation_date;
 
@@ -146,7 +153,7 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
       }
     }
 
-    // 3. Match Branch (SIRH/# de sucursal is strongest match, then Name)
+    // 3. Match Branch & Set Client Type automatically
     if (data.branch_identifier) {
       const search = data.branch_identifier.toLowerCase();
       const branch = branches.find(b => 
@@ -157,46 +164,43 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
       if (branch) {
         matchedBranchId = branch.id;
         updates.branchId = branch.id;
-        // Also update the filter so the dropdown shows correct context
-        setClientFilter(branch.client); 
         setBranchSearch(branch.sirh || branch.name);
+        
+        // Auto-select the client type menu
+        if (branch.client) {
+            setSelectedClientType(branch.client);
+        }
       } else {
-        // If not found, at least put the text in the search box
         setBranchSearch(data.branch_identifier);
       }
     }
 
-    // 4. Match Items (Fuzzy logic)
-    // We determine ownership based on the logic (Tech or Supervisor)
+    // 4. Match Items
     const effectiveOwner = getEffectiveStockOwner(matchedTechId);
-    
-    // Filter stock relevant to this owner (or executor)
     const relevantStock = stock.filter(s => 
       s.owner === 'EJECUTOR' || (effectiveOwner && s.owner === effectiveOwner)
     );
 
     const newSelectedItems: SelectedItem[] = [];
-
     if (data.items && Array.isArray(data.items)) {
       data.items.forEach((aiItem: any) => {
-        // Try to find a stock item where the name contains the AI detected name, or vice versa
-        // Simple heuristic: token matching
         const aiTokens = aiItem.device_name.toLowerCase().split(' ');
-        
         const bestMatch = relevantStock.find(stockItem => {
           const stockName = stockItem.device.toLowerCase();
-          // Check if stock name contains significant parts of AI name
           return aiTokens.some((token: string) => token.length > 3 && stockName.includes(token));
         });
 
         if (bestMatch) {
-          // Avoid duplicates
           if (!newSelectedItems.find(i => i.stockId === bestMatch.id)) {
+            // Default mapping from AI category string to our specific types
+            let mappedType: any = 'Suministro e instalación';
+            if (aiItem.item_category === 'Material o refacción') mappedType = 'Suministro';
+            if (aiItem.item_category === 'Equipo instalado') mappedType = 'Instalación';
+
             newSelectedItems.push({
               stockId: bestMatch.id,
               quantityToUse: Math.min(aiItem.quantity || 1, bestMatch.quantity),
-              // Use AI detection or default to Equipment if unknown
-              usageType: aiItem.item_category === 'Material o refacción' ? 'Material o refacción' : 'Equipo instalado'
+              usageType: mappedType
             });
           }
         }
@@ -206,7 +210,6 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
     setFormData(prev => ({ ...prev, ...updates }));
     if (newSelectedItems.length > 0) {
       setSelectedItems(prev => {
-        // Merge without duplicates
         const combined = [...prev];
         newSelectedItems.forEach(newItem => {
            if (!combined.find(c => c.stockId === newItem.stockId)) {
@@ -217,13 +220,13 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
       });
     }
 
-    alert(`Análisis completado.\n\nDatos detectados:\n- Items encontrados: ${newSelectedItems.length}\n- Sucursal detectada: ${matchedBranchId ? 'Sí' : 'No'}\n- Técnico detectado: ${matchedTechId ? 'Sí' : 'No'}`);
+    alert(`Análisis completado. Datos detectados.`);
   };
 
   const handleAddItem = (stockId: string) => {
     if (selectedItems.find(i => i.stockId === stockId)) return;
-    // Default to 'Equipo instalado', user can change it
-    setSelectedItems([...selectedItems, { stockId, quantityToUse: 1, usageType: 'Equipo instalado' }]);
+    // Default to 'Suministro e instalación' as it is the most common combo
+    setSelectedItems([...selectedItems, { stockId, quantityToUse: 1, usageType: 'Suministro e instalación' }]);
   };
 
   const updateItemQuantity = (stockId: string, qty: number) => {
@@ -234,7 +237,7 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
     setSelectedItems(prev => prev.map(i => i.stockId === stockId ? { ...i, quantityToUse: finalQty } : i));
   };
 
-  const updateItemType = (stockId: string, type: 'Material o refacción' | 'Equipo instalado') => {
+  const updateItemType = (stockId: string, type: 'Instalación' | 'Suministro' | 'Suministro e instalación') => {
     setSelectedItems(prev => prev.map(i => i.stockId === stockId ? { ...i, usageType: type } : i));
   };
 
@@ -245,6 +248,11 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!selectedClientType) {
+      alert("Por favor selecciona el Cliente (Menú superior).");
+      return;
+    }
+
     const technician = technicians.find(t => t.id === formData.technicianId);
     const branch = branches.find(b => b.id === formData.branchId);
 
@@ -253,17 +261,41 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
       return;
     }
 
+    if (warrantyApplied === null) {
+      alert("Por favor indica si aplica o no Garantía.");
+      return;
+    }
+
+    if (!warrantyReason.trim()) {
+      alert("Por favor escribe el motivo de la garantía (o por qué no aplica).");
+      return;
+    }
+
+    // VALIDATION REMOVED FOR IDs as requested
+    // Previously required CMX, SCTASK, REQO, Ticket, SBO. 
+    // Now optional.
+
     const log: InstallationLog = {
       id: `log-${Date.now()}`,
-      sctask: formData.sctask,
-      reqo: formData.reqo,
+      // Client specific fields
+      sctask: selectedClientType === CLIENTS.BANAMEX ? formData.sctask : '',
+      reqo: selectedClientType === CLIENTS.BANAMEX ? formData.reqo : '',
+      ticket: selectedClientType === CLIENTS.BANREGIO ? formData.ticket : '',
+      sbo: selectedClientType === CLIENTS.SANTANDER ? formData.sbo : '',
+      // Common field
       folioComexa: formData.folioComexa,
+      
       technicianName: technician.name,
       reportDate: formData.reportDate,
       branchName: branch.name,
       branchSirh: branch.sirh, 
-      branchRegion: branch.region || 'SIN REGIÓN', // Capture Region
+      branchRegion: branch.region || 'SIN REGIÓN',
       installationDate: formData.installDate,
+
+      // Warranty Data
+      warrantyApplied: warrantyApplied,
+      warrantyReason: warrantyReason,
+
       itemsUsed: selectedItems.map(si => {
         const item = stock.find(s => s.id === si.stockId)!;
         return {
@@ -291,8 +323,12 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
       ...formData,
       sctask: '',
       reqo: '',
-      folioComexa: '',
+      ticket: '',
+      sbo: '',
+      folioComexa: ''
     });
+    setWarrantyApplied(null);
+    setWarrantyReason('');
     setSelectedItems([]);
   };
 
@@ -304,11 +340,10 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
     return t && STOCK_OVERRIDES[t.name];
   }
 
-  // Selected branch details for UI
   const selectedBranch = branches.find(b => b.id === formData.branchId);
 
   return (
-    <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 max-w-4xl mx-auto">
+    <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 max-w-4xl mx-auto">
       <div className="flex justify-between items-center mb-6 border-b border-[#DDA853]/30 pb-2">
         <h2 className="text-2xl font-bold text-[#DDA853]">Registrar Instalación</h2>
         
@@ -333,36 +368,119 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
           </Button>
         </div>
       </div>
-      
-      {/* AI Hint */}
-      <div className="mb-4 bg-blue-900/40 p-3 rounded border border-blue-400/30 flex items-start gap-2">
-        <FileText size={18} className="text-blue-300 mt-1" />
-        <p className="text-xs text-blue-200">
-          <strong>Tip:</strong> Sube una foto o PDF. Para autocompletar el <strong># de Sucursal/SIRH</strong>, el <strong>Folio Comexa</strong> y clasificará los items automáticamente.
-        </p>
-      </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Main Info */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-             <label className="block text-sm font-medium text-[#DDA853]">SCTASK</label>
-             <input required type="text" className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.sctask} onChange={e => setFormData({...formData, sctask: e.target.value})} />
-          </div>
-          <div>
-             <label className="block text-sm font-medium text-[#DDA853]">REQO</label>
-             <input required type="text" className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.reqo} onChange={e => setFormData({...formData, reqo: e.target.value})} />
-          </div>
-          <div>
-             <label className="block text-sm font-medium text-[#DDA853]">Folio Comexa</label>
-             <input type="text" className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.folioComexa} onChange={e => setFormData({...formData, folioComexa: e.target.value})} />
-          </div>
+        
+        {/* --- CLIENT SELECTOR MENU --- */}
+        <div className="bg-[#1E406A]/60 p-4 rounded-lg border border-[#DDA853]/30">
+           <label className="block text-sm font-bold text-[#DDA853] mb-3 uppercase tracking-wide">
+             1. Selecciona el Cliente
+           </label>
+           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[CLIENTS.BANAMEX, CLIENTS.BANREGIO, CLIENTS.SANTANDER].map(client => (
+                <button
+                  key={client}
+                  type="button"
+                  onClick={() => {
+                    setSelectedClientType(client);
+                    setFormData(prev => ({ ...prev, branchId: '' })); // Reset branch on change
+                    setBranchSearch('');
+                  }}
+                  className={`
+                    relative p-3 rounded-md border text-center transition-all duration-200
+                    ${selectedClientType === client 
+                      ? 'bg-[#DDA853] border-[#DDA853] text-[#1A2A4F] font-bold shadow-lg transform scale-105' 
+                      : 'bg-[#1E406A] border-[#DDA853]/20 text-[#DDA853] hover:bg-[#1E406A]/80 hover:border-[#DDA853]/50'
+                    }
+                  `}
+                >
+                  {selectedClientType === client && (
+                    <div className="absolute top-1 right-2">
+                      <CheckCircle2 size={14} />
+                    </div>
+                  )}
+                  {client}
+                </button>
+              ))}
+           </div>
         </div>
+
+        {/* Dynamic Fields Section */}
+        {selectedClientType && (
+          <div className="flex flex-wrap justify-center items-end gap-6 animate-in fade-in slide-in-from-top-2 duration-300 p-6 bg-[#1E406A]/30 rounded-lg border border-[#DDA853]/10 text-center">
+            
+            {/* COMMON FIELD: CMX */}
+            <div className="w-full sm:w-auto">
+              <label className="block text-sm font-bold text-[#DDA853] mb-1">Folio Comexa (CMX)</label>
+              <input 
+                type="text" 
+                placeholder="CMX012025..." 
+                className="w-full sm:w-64 text-center border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] focus:border-[#DDA853] outline-none tracking-wider font-mono" 
+                value={formData.folioComexa} 
+                onChange={e => setFormData({...formData, folioComexa: e.target.value})} 
+              />
+            </div>
+
+            {/* Fields for BANAMEX */}
+            {selectedClientType === CLIENTS.BANAMEX && (
+              <>
+                <div className="w-full sm:w-auto">
+                  <label className="block text-sm font-medium text-[#DDA853] mb-1">SCTASK</label>
+                  <input 
+                    type="text" 
+                    placeholder="SCTASK00..."
+                    className="w-full sm:w-60 text-center border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] focus:border-[#DDA853] outline-none tracking-wider font-mono" 
+                    value={formData.sctask} 
+                    onChange={e => setFormData({...formData, sctask: e.target.value})} 
+                  />
+                </div>
+                <div className="w-full sm:w-auto">
+                  <label className="block text-sm font-medium text-[#DDA853] mb-1">REQO</label>
+                  <input 
+                    type="text" 
+                    placeholder="REQ000..."
+                    className="w-full sm:w-48 text-center border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] focus:border-[#DDA853] outline-none tracking-wider font-mono" 
+                    value={formData.reqo} 
+                    onChange={e => setFormData({...formData, reqo: e.target.value})} 
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Fields for BANREGIO */}
+            {selectedClientType === CLIENTS.BANREGIO && (
+              <div className="w-full sm:w-auto">
+                <label className="block text-sm font-medium text-[#DDA853] mb-1">Ticket / Folio Cliente</label>
+                <input 
+                  type="text" 
+                  placeholder="Ej. 465520"
+                  className="w-full sm:w-40 text-center border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] focus:border-[#DDA853] outline-none tracking-wider font-mono" 
+                  value={formData.ticket} 
+                  onChange={e => setFormData({...formData, ticket: e.target.value})} 
+                />
+              </div>
+            )}
+
+            {/* Fields for SANTANDER */}
+            {selectedClientType === CLIENTS.SANTANDER && (
+               <div className="w-full sm:w-auto">
+                 <label className="block text-sm font-medium text-[#DDA853] mb-1">SBO</label>
+                 <input 
+                   type="text" 
+                   placeholder="SBO017..." 
+                   className="w-full sm:w-44 text-center border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] focus:border-[#DDA853] outline-none tracking-wider font-mono" 
+                   value={formData.sbo} 
+                   onChange={e => setFormData({...formData, sbo: e.target.value})} 
+                 />
+               </div>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
              <label className="block text-sm font-medium text-[#DDA853]">Técnico (IDC)</label>
-             <select required className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.technicianId} onChange={e => setFormData({...formData, technicianId: e.target.value})}>
+             <select required className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.technicianId} onChange={e => setFormData({...formData, technicianId: e.target.value})}>
                <option value="">Seleccionar...</option>
                {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
              </select>
@@ -373,30 +491,14 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
              )}
           </div>
           
-          {/* Branch Section - Advanced Filtering */}
+          {/* Branch Section */}
           <div className="bg-[#1E406A]/30 p-4 rounded-md border border-[#DDA853]/20 md:row-span-2">
-             <label className="block text-sm font-medium text-[#DDA853] mb-2">Búsqueda de Sucursal (# de sucursal / SIRH)</label>
+             <label className="block text-sm font-medium text-[#DDA853] mb-2">
+               {selectedClientType ? `Sucursales de ${selectedClientType}` : 'Selecciona un cliente arriba'}
+             </label>
              <div className="grid grid-cols-1 gap-2">
                 
-                {/* 1. Client Filter */}
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Building size={14} className="text-[#DDA853]/70" />
-                  </div>
-                  <select 
-                    className="w-full pl-9 border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none text-sm"
-                    value={clientFilter}
-                    onChange={(e) => {
-                      setClientFilter(e.target.value);
-                      setFormData({...formData, branchId: ''}); // Reset selection on filter change
-                    }}
-                  >
-                    <option value="">Todos los Clientes</option>
-                    {uniqueClients.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-
-                {/* 2. SIRH Search */}
+                {/* SIRH Search */}
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Hash size={14} className="text-[#DDA853]/70" />
@@ -404,25 +506,30 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
                   <input 
                     type="text" 
                     placeholder="Buscar SIRH o Nombre..." 
-                    className="w-full pl-9 border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none placeholder-[#DDA853]/50 text-sm"
+                    disabled={!selectedClientType}
+                    className="w-full pl-9 border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none placeholder-[#DDA853]/50 text-sm disabled:opacity-50"
                     value={branchSearch}
                     onChange={(e) => setBranchSearch(e.target.value)}
                   />
                 </div>
 
-                {/* 3. Final Selection */}
+                {/* Final Selection */}
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <MapPin size={14} className="text-[#DDA853]/70" />
                   </div>
                   <select 
                     required 
-                    className="w-full pl-9 border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none text-sm"
+                    disabled={!selectedClientType}
+                    className="w-full pl-9 border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none text-sm disabled:opacity-50"
                     value={formData.branchId} 
                     onChange={e => setFormData({...formData, branchId: e.target.value})}
                   >
                     <option value="">
-                      {filteredBranches.length === 0 ? "Sin resultados" : "-- Seleccionar Sucursal --"}
+                      {!selectedClientType 
+                        ? "-- Selecciona cliente primero --" 
+                        : filteredBranches.length === 0 ? "Sin resultados" : "-- Seleccionar Sucursal --"
+                      }
                     </option>
                     {filteredBranches.map(b => (
                       <option key={b.id} value={b.id}>
@@ -434,7 +541,7 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
              </div>
              {selectedBranch && (
                <div className="mt-2 text-xs text-[#DDA853]/80 pl-1 space-y-1">
-                 <div>Seleccionado: <strong>{selectedBranch.name}</strong> - {selectedBranch.client}</div>
+                 <div>Seleccionado: <strong>{selectedBranch.name}</strong></div>
                  <div className="flex items-center gap-1 text-[#8CE4FF]">
                     <Globe size={10} /> Región: {selectedBranch.region || 'NO DEFINIDA'}
                  </div>
@@ -444,11 +551,11 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
 
           <div>
              <label className="block text-sm font-medium text-[#DDA853]">Fecha Reporte</label>
-             <input required type="date" className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.reportDate} onChange={e => setFormData({...formData, reportDate: e.target.value})} />
+             <input required type="date" className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.reportDate} onChange={e => setFormData({...formData, reportDate: e.target.value})} />
           </div>
           <div>
              <label className="block text-sm font-medium text-[#DDA853]">Fecha Instalación</label>
-             <input required type="date" className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.installDate} onChange={e => setFormData({...formData, installDate: e.target.value})} />
+             <input required type="date" className="mt-1 w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none" value={formData.installDate} onChange={e => setFormData({...formData, installDate: e.target.value})} />
           </div>
         </div>
 
@@ -463,7 +570,7 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
                 type="text" 
                 placeholder={formData.technicianId ? "Buscar dispositivo en stock..." : "Selecciona un técnico primero"}
                 disabled={!formData.technicianId}
-                className="w-full pl-9 border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none placeholder-[#DDA853]/50 disabled:opacity-50"
+                className="w-full pl-9 border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] focus:bg-[#1E406A]/80 text-[#DDA853] focus:border-[#DDA853] outline-none placeholder-[#DDA853]/50 disabled:opacity-50"
                 value={itemSearch}
                 onChange={e => setItemSearch(e.target.value)}
               />
@@ -509,7 +616,7 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
                          <div className="text-[#DDA853]/60 text-xs">Stock: {item.quantity}</div>
                        </div>
                        
-                       {/* Classification Selector */}
+                       {/* Classification Selector - UPDATED */}
                        <div className="col-span-4 md:col-span-4">
                          <div className="relative">
                             <Settings2 size={12} className="absolute left-2 top-2.5 text-[#DDA853]/50 pointer-events-none" />
@@ -518,8 +625,9 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
                                value={si.usageType}
                                onChange={(e) => updateItemType(si.stockId, e.target.value as any)}
                             >
-                               <option value="Equipo instalado">Equipo instalado</option>
-                               <option value="Material o refacción">Material o refacción</option>
+                               <option value="Instalación">Instalación</option>
+                               <option value="Suministro">Suministro</option>
+                               <option value="Suministro e instalación">Suministro e instalación</option>
                             </select>
                          </div>
                        </div>
@@ -544,6 +652,47 @@ export const InstallationForm: React.FC<InstallationFormProps> = ({ technicians,
               </div>
             </div>
           )}
+        </div>
+        
+        {/* WARRANTY SECTION - COLORS SWAPPED */}
+        <div className="border-t border-[#DDA853]/30 pt-6">
+           <div className="flex items-center gap-2 text-lg font-bold text-[#DDA853] mb-4">
+             {warrantyApplied === true ? <ShieldAlert size={24} className="text-red-500"/> : warrantyApplied === false ? <ShieldCheck size={24} className="text-green-500"/> : <ShieldCheck size={24}/>}
+             <h3>¿Aplica Garantía?</h3>
+           </div>
+           
+           <div className="flex gap-4 mb-4">
+              <button 
+                type="button" 
+                onClick={() => setWarrantyApplied(true)}
+                className={`flex-1 py-3 px-4 rounded border transition-all ${warrantyApplied === true ? 'bg-red-600/20 border-red-500 text-red-400 font-bold' : 'bg-[#1E406A]/50 border-[#DDA853]/30 text-[#DDA853]/60 hover:bg-[#DDA853]/10'}`}
+              >
+                SÍ APLICA
+              </button>
+              <button 
+                type="button" 
+                onClick={() => setWarrantyApplied(false)}
+                className={`flex-1 py-3 px-4 rounded border transition-all ${warrantyApplied === false ? 'bg-green-600/20 border-green-500 text-green-400 font-bold' : 'bg-[#1E406A]/50 border-[#DDA853]/30 text-[#DDA853]/60 hover:bg-[#DDA853]/10'}`}
+              >
+                NO APLICA
+              </button>
+           </div>
+           
+           {warrantyApplied !== null && (
+             <div className="animate-in fade-in slide-in-from-top-2">
+               <label className="block text-sm font-medium text-[#DDA853] mb-2">
+                 {warrantyApplied ? "Motivo por el cual aplica la garantía:" : "Motivo por el cual NO aplica / Comentarios:"}
+               </label>
+               <textarea 
+                 required
+                 rows={3}
+                 className="w-full border border-[#DDA853]/30 rounded-md p-3 bg-[#1E406A]/50 text-[#DDA853] focus:border-[#DDA853] outline-none placeholder-[#DDA853]/30"
+                 placeholder={warrantyApplied ? "Ej. Falla de fábrica en sensor..." : "Ej. Daño por vandalismo, fuera de periodo..."}
+                 value={warrantyReason}
+                 onChange={e => setWarrantyReason(e.target.value)}
+               />
+             </div>
+           )}
         </div>
 
         <div className="flex justify-end pt-4 border-t border-[#DDA853]/30">

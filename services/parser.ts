@@ -1,5 +1,6 @@
-import { StockItem, Technician, Branch } from '../types';
+import { StockItem, Technician, Branch, InstallationLog, CatalogItem, DeviceCatalog } from '../types';
 import { ROW_START_TOP, ROW_END_TOP, ROW_START_BOTTOM, OWNER_EXECUTOR } from '../constants';
+import { read, utils } from 'xlsx';
 
 // Basic CSV Line Splitter handling quotes
 const parseCSVLine = (line: string): string[] => {
@@ -25,6 +26,24 @@ const parseCSVLine = (line: string): string[] => {
 const parseCSV = (content: string): string[][] => {
   const lines = content.split(/\r?\n/);
   return lines.map(parseCSVLine);
+};
+
+// Helper to format date from DD/MM/YYYY to YYYY-MM-DD
+const formatDate = (dateStr: string): string => {
+  if (!dateStr) return new Date().toISOString().split('T')[0];
+  
+  // Check if it's already YYYY-MM-DD
+  if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) return dateStr;
+
+  // Handle DD/MM/YYYY or DD-MM-YYYY
+  const parts = dateStr.split(/[\/\-]/);
+  if (parts.length === 3) {
+    // Assume Day Month Year if year is last
+    if (parts[2].length === 4) {
+       return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  }
+  return dateStr;
 };
 
 // Logic adapted from the Python script to extract stock blocks
@@ -82,7 +101,10 @@ export const parseStockFile = (content: string, ownerName: string): StockItem[] 
 export const parseTechnicianFile = (content: string): Technician[] => {
   const rows = parseCSV(content);
   const headers = rows[0]?.map(h => h.toUpperCase()) || [];
-  const idcIndex = headers.findIndex(h => h.includes('IDC'));
+  
+  // Find columns
+  const idcIndex = headers.findIndex(h => h.includes('IDC') || h.includes('NOMBRE'));
+  const typeIndex = headers.findIndex(h => h.includes('TIPO') || h.includes('ROL') || h.includes('CATEGORIA'));
 
   if (idcIndex === -1) return [];
 
@@ -91,9 +113,20 @@ export const parseTechnicianFile = (content: string): Technician[] => {
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row[idcIndex]) {
+      const name = row[idcIndex].replace(/"/g, '').trim();
+      let type: 'NOMINA' | 'EJECUTOR' = 'NOMINA'; // Default
+
+      if (typeIndex !== -1 && row[typeIndex]) {
+        const typeStr = row[typeIndex].toUpperCase();
+        if (typeStr.includes('EJECUTOR')) {
+          type = 'EJECUTOR';
+        }
+      }
+
       techs.push({
         id: `tech-${i}`,
-        name: row[idcIndex].replace(/"/g, '').trim()
+        name: name,
+        type: type
       });
     }
   }
@@ -129,4 +162,110 @@ export const parseBranchFile = (content: string): Branch[] => {
   }
 
   return branches;
+};
+
+export const parseServiceConcentrate = (content: string): InstallationLog[] => {
+  const rows = parseCSV(content);
+  const headers = rows[0]?.map(h => h.toUpperCase().trim()) || [];
+
+  // Required Columns:
+  // FOLIO DE INCIDENTE, FOLIO COMEXA, SIRH, TIPO, INMUEBLE, REGION, FECHA REGISTRO, FECHA DE ATENCION, PERSONAL RESPONSABLE
+  
+  const idxIncidente = headers.findIndex(h => h.includes('INCIDENTE')); // Ticket/SCTASK
+  const idxComexa = headers.findIndex(h => h.includes('COMEXA'));
+  const idxSirh = headers.findIndex(h => h.includes('SIRH'));
+  // const idxTipo = headers.findIndex(h => h.includes('TIPO')); // Not used in Log structure currently, maybe for logic?
+  const idxInmueble = headers.findIndex(h => h.includes('INMUEBLE') || h.includes('SUCURSAL'));
+  const idxRegion = headers.findIndex(h => h.includes('REGION'));
+  const idxFechaReg = headers.findIndex(h => h.includes('FECHA REGISTRO'));
+  const idxFechaAtt = headers.findIndex(h => h.includes('FECHA DE ATENCION') || h.includes('ATENCIÓN'));
+  const idxPersonal = headers.findIndex(h => h.includes('PERSONAL') || h.includes('TECNICO') || h.includes('RESPONSABLE'));
+
+  if (idxComexa === -1 || idxInmueble === -1) {
+    // Basic validation failed
+    console.warn("Missing required columns in Service Concentrate file");
+    return [];
+  }
+
+  const logs: InstallationLog[] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.length < 5) continue; // Skip empty rows
+
+    const clean = (val: string) => val ? val.replace(/"/g, '').trim() : '';
+
+    logs.push({
+      id: `hist-import-${Date.now()}-${i}`,
+      
+      // Map Incidente to Ticket (Generic bucket)
+      ticket: idxIncidente !== -1 ? clean(row[idxIncidente]) : '',
+      
+      // Common Fields
+      folioComexa: idxComexa !== -1 ? clean(row[idxComexa]) : 'S/F',
+      technicianName: idxPersonal !== -1 ? clean(row[idxPersonal]) : 'NO DEFINIDO',
+      
+      reportDate: idxFechaReg !== -1 ? formatDate(clean(row[idxFechaReg])) : new Date().toISOString().split('T')[0],
+      installationDate: idxFechaAtt !== -1 ? formatDate(clean(row[idxFechaAtt])) : new Date().toISOString().split('T')[0],
+      
+      branchName: idxInmueble !== -1 ? clean(row[idxInmueble]) : 'NO DEFINIDO',
+      branchSirh: idxSirh !== -1 ? clean(row[idxSirh]) : '',
+      branchRegion: idxRegion !== -1 ? clean(row[idxRegion]) : 'SIN REGION',
+
+      // Defaults for imported history
+      warrantyApplied: false,
+      warrantyReason: 'Carga Masiva Histórica',
+      itemsUsed: [] // No items in concentrate file
+    });
+  }
+
+  return logs;
+};
+
+// NEW: Parse Catalog Excel (Banamex/Santander)
+export const parseCatalogExcel = async (file: File): Promise<DeviceCatalog> => {
+  const buffer = await file.arrayBuffer();
+  const wb = read(buffer);
+  const result: DeviceCatalog = {};
+
+  wb.SheetNames.forEach(sheetName => {
+      const upperName = sheetName.toUpperCase();
+      let clientKey = '';
+      if(upperName.includes('BANAMEX')) clientKey = 'BANAMEX';
+      else if(upperName.includes('SANTANDER')) clientKey = 'SANTANDER';
+      // Future: Add Banregio if needed
+      
+      if(clientKey) {
+          const sheet = wb.Sheets[sheetName];
+          const data = utils.sheet_to_json(sheet, { header: 1 }) as string[][];
+          
+          // Assumption based on request:
+          // Row 0 might be headers? Or raw data. 
+          // Columns: Tipo (Category) [0], Dispositivo [1], Modelo [2]
+          
+          const items: CatalogItem[] = [];
+          
+          // Skip the first row if it looks like a header (contains "Tipo" or "Dispositivo")
+          const startIdx = (data[0] && (data[0][0]?.toUpperCase().includes('TIPO') || data[0][1]?.toUpperCase().includes('DISPOSITIVO'))) ? 1 : 0;
+
+          for(let i = startIdx; i < data.length; i++) {
+             const row = data[i];
+             if(!row || row.length < 2) continue;
+
+             const category = row[0]?.toString().trim() || 'MISCELANEOS';
+             const device = row[1]?.toString().trim();
+             const model = row[2]?.toString().trim() || 'N/A';
+
+             if(device) {
+               items.push({ category, device, model });
+             }
+          }
+
+          if(items.length > 0) {
+            result[clientKey] = items;
+          }
+      }
+  });
+
+  return result;
 };

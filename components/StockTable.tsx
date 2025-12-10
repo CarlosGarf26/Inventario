@@ -100,7 +100,7 @@ export const StockTable: React.FC<StockTableProps> = ({ items }) => {
   };
 
   return (
-    <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20">
+    <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20">
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <h2 className="text-xl font-bold text-[#DDA853]">Inventario Actual</h2>
         <Button onClick={downloadCSV} variant="secondary" className="flex items-center gap-2">

@@ -1,17 +1,18 @@
 import React, { useState, useMemo } from 'react';
-import { Technician, StockItem } from '../types';
+import { Technician, StockItem, DeviceCatalog } from '../types';
 import { Button } from './ui/Button';
 import { ArrowRightLeft, PackagePlus, Search, ShoppingBag, Truck, ArrowRight, Eye, EyeOff } from 'lucide-react';
-import { CATEGORIES, CLIENTS, DEVICE_CATALOG } from '../constants';
+import { CATEGORIES, CLIENTS } from '../constants';
 
 interface StockAssignmentProps {
   technicians: Technician[];
   fullStock: StockItem[]; 
   onTransfer: (sourceOwner: string, destOwner: string, items: { stockId: string, quantity: number }[]) => void;
   onDirectAdd: (technicianId: string, item: { category: string, device: string, model: string, quantity: number }) => void;
+  deviceCatalog: DeviceCatalog;
 }
 
-export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, fullStock, onTransfer, onDirectAdd }) => {
+export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, fullStock, onTransfer, onDirectAdd, deviceCatalog }) => {
   const [mode, setMode] = useState<'TRANSFER' | 'DIRECT'>('TRANSFER');
   
   // --- Transfer State ---
@@ -42,7 +43,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
   }, [technicians]);
 
   // Extract UNIQUE device names based on the SELECTED CATEGORY and SELECTED CLIENT for autocomplete
-  // This combines existing stock items + the hardcoded catalog
+  // This combines existing stock items + the passed device catalog
   const availableDeviceNames = useMemo(() => {
     // 1. Devices from existing stock (that match category)
     const stockDevices = fullStock
@@ -51,19 +52,18 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
     
     // 2. Devices from the specific Client Catalog (that match category)
     let catalogDevices: string[] = [];
-    if (selectedClient && DEVICE_CATALOG[selectedClient]) {
-       catalogDevices = DEVICE_CATALOG[selectedClient]
+    if (selectedClient && deviceCatalog[selectedClient]) {
+       catalogDevices = deviceCatalog[selectedClient]
         .filter(d => d.category === directItem.category)
         .map(d => d.device);
     } else if (!selectedClient) {
        // If no client selected, maybe show generic or all? For now, stick to Stock.
-       // Or iterate all catalogs? Let's keep it clean: require Client for Catalog, else just Stock.
     }
 
     // Combine and Unique
     const combined = new Set([...stockDevices, ...catalogDevices]);
     return Array.from(combined).sort();
-  }, [fullStock, directItem.category, selectedClient]);
+  }, [fullStock, directItem.category, selectedClient, deviceCatalog]);
 
   // Helper to find model in catalog when device name changes
   const handleDeviceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -71,8 +71,8 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
     let newModel = directItem.model;
 
     // Try to auto-fill model from Catalog if exact match
-    if (selectedClient && DEVICE_CATALOG[selectedClient]) {
-      const catalogItem = DEVICE_CATALOG[selectedClient].find(
+    if (selectedClient && deviceCatalog[selectedClient]) {
+      const catalogItem = deviceCatalog[selectedClient].find(
         i => i.device.toLowerCase() === newName.toLowerCase() && i.category === directItem.category
       );
       if (catalogItem) {
@@ -164,7 +164,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
   };
 
   return (
-    <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 max-w-6xl mx-auto">
+    <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 max-w-6xl mx-auto">
       <h2 className="text-2xl font-bold text-[#DDA853] mb-6 flex items-center gap-2">
         <ArrowRightLeft size={28} /> Asignación de Stock
       </h2>
@@ -189,11 +189,11 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
         <form onSubmit={submitTransfer} className="space-y-6 animate-in fade-in duration-300">
           
           {/* Source & Dest Selection */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start bg-[#1E406A]/30 p-4 rounded-lg border border-[#DDA853]/10">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start bg-[#27548A]/40 p-4 rounded-lg border border-[#DDA853]/10">
              <div className="space-y-2">
                 <label className="block text-sm font-medium text-[#DDA853]">Origen (Desde donde sale)</label>
                 <select 
-                  className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 text-[#DDA853] outline-none focus:border-[#DDA853]"
+                  className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] outline-none focus:border-[#DDA853]"
                   value={sourceOwner}
                   onChange={e => {
                     setSourceOwner(e.target.value);
@@ -209,7 +209,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
                 <div className="flex gap-2">
                   <select 
                     required
-                    className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 text-[#DDA853] outline-none focus:border-[#DDA853]"
+                    className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] outline-none focus:border-[#DDA853]"
                     value={destOwner}
                     onChange={e => setDestOwner(e.target.value)}
                   >
@@ -257,7 +257,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Left: Source List */}
-            <div className="p-4 bg-[#1E406A]/30 rounded-lg border border-[#DDA853]/10 h-96 flex flex-col">
+            <div className="p-4 bg-[#27548A]/40 rounded-lg border border-[#DDA853]/10 h-96 flex flex-col">
               <h3 className="text-[#DDA853] font-semibold mb-2 flex justify-between items-center">
                 <span>Stock en: <span className="text-white">{sourceOwner}</span></span>
                 <span className="text-xs font-normal opacity-70">Click para agregar</span>
@@ -297,7 +297,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
             </div>
 
             {/* Right: Selected List */}
-            <div className="p-4 bg-[#1E406A]/30 rounded-lg border border-[#DDA853]/10 h-96 flex flex-col">
+            <div className="p-4 bg-[#27548A]/40 rounded-lg border border-[#DDA853]/10 h-96 flex flex-col">
               <h3 className="text-[#DDA853] font-semibold mb-4">Items a Transferir</h3>
               {selectedTransferItems.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-[#DDA853]/40 text-sm italic">
@@ -342,7 +342,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-300">
           {/* Left Column: Form */}
           <form onSubmit={submitDirectAdd} className="space-y-6">
-            <div className="p-6 bg-[#1E406A]/30 rounded-lg border border-[#DDA853]/10 h-full flex flex-col">
+            <div className="p-6 bg-[#27548A]/40 rounded-lg border border-[#DDA853]/10 h-full flex flex-col">
               <h3 className="text-[#DDA853] font-semibold mb-4 text-lg">Registro de Compra / Solicitud</h3>
               <p className="text-sm text-[#DDA853]/70 mb-6">
                 Ingresa nuevo material directamente al inventario del técnico. Selecciona el Cliente para ver su catálogo de dispositivos.
@@ -353,7 +353,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
                   <label className="block text-sm font-medium text-[#DDA853] mb-1">Técnico Receptor (IDC)</label>
                   <select 
                     required
-                    className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 text-[#DDA853] outline-none focus:border-[#DDA853]"
+                    className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] outline-none focus:border-[#DDA853]"
                     value={directTechId}
                     onChange={e => {
                       setDirectTechId(e.target.value);
@@ -370,7 +370,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
                   <div>
                     <label className="block text-sm font-medium text-[#DDA853] mb-1">Cliente (Catálogo)</label>
                     <select 
-                      className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 text-[#DDA853] outline-none"
+                      className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] outline-none"
                       value={selectedClient}
                       onChange={e => {
                         setSelectedClient(e.target.value);
@@ -390,7 +390,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
                       type="number"
                       min="1"
                       required
-                      className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 text-[#DDA853] outline-none"
+                      className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] outline-none"
                       value={directItem.quantity}
                       onChange={e => setDirectItem({...directItem, quantity: parseInt(e.target.value)})}
                     />
@@ -400,7 +400,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
                 <div>
                    <label className="block text-sm font-medium text-[#DDA853] mb-1">Categoría</label>
                     <select 
-                       className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 text-[#DDA853] outline-none"
+                       className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] outline-none"
                        value={directItem.category}
                        onChange={e => setDirectItem({...directItem, category: e.target.value, device: '', model: ''})}
                     >
@@ -415,7 +415,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
                     required
                     list="device-suggestions"
                     placeholder="Escribe o selecciona..."
-                    className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 text-[#DDA853] outline-none placeholder-[#DDA853]/30"
+                    className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] outline-none placeholder-[#DDA853]/30"
                     value={directItem.device}
                     onChange={handleDeviceChange}
                   />
@@ -432,7 +432,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
                   <input 
                     type="text"
                     placeholder="Ej. B1A21"
-                    className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A]/50 text-[#DDA853] outline-none placeholder-[#DDA853]/30"
+                    className="w-full border border-[#DDA853]/30 rounded-md p-2 bg-[#1E406A] text-[#DDA853] outline-none placeholder-[#DDA853]/30"
                     value={directItem.model}
                     onChange={e => setDirectItem({...directItem, model: e.target.value})}
                   />
@@ -448,7 +448,7 @@ export const StockAssignment: React.FC<StockAssignmentProps> = ({ technicians, f
           </form>
 
           {/* Right Column: Reference Stock */}
-          <div className="p-4 bg-[#1E406A]/30 rounded-lg border border-[#DDA853]/10 h-full flex flex-col">
+          <div className="p-4 bg-[#27548A]/40 rounded-lg border border-[#DDA853]/10 h-full flex flex-col">
              <h3 className="text-[#DDA853] font-semibold mb-2 flex justify-between items-center">
                 <span>Inventario Actual: <span className="text-white">{technicians.find(t => t.id === directTechId)?.name || '...'}</span></span>
              </h3>

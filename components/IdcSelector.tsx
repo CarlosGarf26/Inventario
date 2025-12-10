@@ -41,13 +41,13 @@ export const IdcSelector: React.FC<IdcSelectorProps> = ({ isOpen, onClose, onSel
             Nombre del Propietario (IDC/Ejecutor)
           </label>
           <select 
-            className="w-full border border-[#DDA853]/30 rounded-md p-2 focus:ring-2 focus:ring-[#DDA853] outline-none bg-[#1E406A]/50 text-[#8CE4FF]"
+            className="w-full border border-[#DDA853]/30 rounded-md p-2 focus:ring-2 focus:ring-[#DDA853] outline-none bg-[#1E406A] text-[#8CE4FF]"
             value={selectedTech}
             onChange={(e) => setSelectedTech(e.target.value)}
           >
             <option value="">-- Seleccionar --</option>
             {technicians.map(t => (
-              <option key={t.id} value={t.name}>{t.name}</option>
+              <option key={t.id} value={t.name}>{t.name} ({t.type === 'EJECUTOR' ? 'Ejec.' : 'Nom.'})</option>
             ))}
           </select>
           {technicians.length === 0 && (

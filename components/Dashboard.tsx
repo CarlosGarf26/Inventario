@@ -26,6 +26,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
 
   const ownerData = useMemo(() => {
     return stock.reduce((acc, item) => {
+      // Logic could be improved here if we had technician type readily available in stock item owners
+      // But for now, just split by Executor vs Others
       const key = item.owner === 'EJECUTOR' ? 'Ejecutor' : 'IDC (Técnicos)';
       const existing = acc.find(x => x.name === key);
       if (existing) {
@@ -88,7 +90,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
     <div className="space-y-6">
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 flex items-center">
+        <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 flex items-center">
           <div className="p-3 bg-blue-100/10 rounded-full text-[#DDA853] mr-4 border border-[#DDA853]/30">
             <Package size={24} />
           </div>
@@ -98,7 +100,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
           </div>
         </div>
 
-        <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 flex items-center">
+        <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 flex items-center">
           <div className="p-3 bg-green-100/10 rounded-full text-[#DDA853] mr-4 border border-[#DDA853]/30">
             <PenTool size={24} />
           </div>
@@ -108,7 +110,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
           </div>
         </div>
 
-        <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 flex items-center">
+        <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 flex items-center">
           <div className="p-3 bg-purple-100/10 rounded-full text-[#DDA853] mr-4 border border-[#DDA853]/30">
             <Activity size={24} />
           </div>
@@ -118,7 +120,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
           </div>
         </div>
 
-        <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 flex items-center">
+        <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 flex items-center">
            <div className="p-3 bg-yellow-100/10 rounded-full text-[#DDA853] mr-4 border border-[#DDA853]/30">
             <Users size={24} />
           </div>
@@ -132,7 +134,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
       {/* Row 2: Analysis Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top 5 Consumption */}
-        <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 h-[400px]">
+        <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 h-[400px]">
           <div className="flex items-center gap-2 mb-4">
             <TrendingUp className="text-[#DDA853]" size={20} />
             <h3 className="text-lg font-bold text-[#DDA853]">Top 5: Materiales Más Utilizados</h3>
@@ -164,7 +166,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
         </div>
 
         {/* Technician Performance */}
-        <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 h-[400px]">
+        <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 h-[400px]">
           <div className="flex items-center gap-2 mb-4">
             <BarChart2 className="text-[#DDA853]" size={20} />
             <h3 className="text-lg font-bold text-[#DDA853]">Rendimiento Técnico (Instalaciones vs Gasto)</h3>
@@ -191,7 +193,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
 
       {/* Row 3: Inventory Overview */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 h-96">
+        <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 h-96">
           <h3 className="text-lg font-bold text-[#DDA853] mb-4">Stock Actual por Categoría</h3>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={categoryData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
@@ -209,7 +211,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stock, logs }) => {
           </ResponsiveContainer>
         </div>
 
-        <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 h-96">
+        <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20 h-96">
           <h3 className="text-lg font-bold text-[#DDA853] mb-4">Distribución de Propietario</h3>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>

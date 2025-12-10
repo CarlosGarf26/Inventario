@@ -10,6 +10,7 @@ export interface StockItem {
 export interface Technician {
   id: string;
   name: string;
+  type: 'NOMINA' | 'EJECUTOR'; // New field
 }
 
 export interface Branch {
@@ -24,22 +25,37 @@ export interface Branch {
 
 export interface InstallationLog {
   id: string;
-  sctask: string;
-  reqo: string;
-  folioComexa: string;
+  sctask?: string; // Banamex
+  reqo?: string;   // Banamex
+  sbo?: string;    // Santander
+  ticket?: string; // Banregio (Folio Cliente)
+  folioComexa?: string; // CMX (Internal) - ALL Clients
   technicianName: string;
   reportDate: string;
   branchName: string;
   branchSirh?: string;
-  branchRegion?: string; // Nuevo campo para Reporte Gerencial
+  branchRegion?: string;
   installationDate: string;
+  
+  // New Warranty Fields
+  warrantyApplied: boolean;
+  warrantyReason: string;
+
   itemsUsed: {
     device: string;
     model: string;
     quantity: number;
-    usageType: 'Material o refacción' | 'Equipo instalado';
+    usageType: 'Instalación' | 'Suministro' | 'Suministro e instalación';
   }[];
 }
+
+export interface CatalogItem {
+  category: string;
+  device: string;
+  model: string;
+}
+
+export type DeviceCatalog = Record<string, CatalogItem[]>;
 
 // Helper type for the raw CSV parsing
 export type CSVRow = string[];

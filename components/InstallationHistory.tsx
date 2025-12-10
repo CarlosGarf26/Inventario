@@ -1,7 +1,7 @@
 import React from 'react';
 import { InstallationLog } from '../types';
 import { Button } from './ui/Button';
-import { Download, FileText, Calendar, MapPin, User, Hash, Globe } from 'lucide-react';
+import { Download, FileText, Calendar, MapPin, User, Hash, Globe, ShieldCheck, ShieldAlert } from 'lucide-react';
 
 interface InstallationHistoryProps {
   logs: InstallationLog[];
@@ -15,13 +15,17 @@ export const InstallationHistory: React.FC<InstallationHistoryProps> = ({ logs }
       "ID Registro",
       "Fecha Reporte",
       "Fecha Instalación",
+      "Folio Comexa (CMX)", // Mandatory for all
       "SCTASK",
       "REQO",
-      "Folio Comexa",
+      "Ticket/Folio Cliente", // Banregio
+      "SBO", // Santander
       "Técnico",
+      "Garantía",
+      "Motivo Garantía",
       "Sucursal (Nombre)",
       "Sucursal (SIRH)",
-      "Región", // New
+      "Región",
       "Dispositivo",
       "Modelo",
       "Cantidad",
@@ -34,13 +38,17 @@ export const InstallationHistory: React.FC<InstallationHistoryProps> = ({ logs }
         log.id,
         log.reportDate,
         log.installationDate,
-        `"${log.sctask}"`, // Quote to prevent CSV breaking
-        `"${log.reqo}"`,
-        `"${log.folioComexa || ''}"`,
+        `"${log.folioComexa || ''}"`, // CMX
+        `"${log.sctask || ''}"`, 
+        `"${log.reqo || ''}"`,
+        `"${log.ticket || ''}"`, // Banregio Ticket
+        `"${log.sbo || ''}"`, // Santander SBO
         `"${log.technicianName}"`,
+        log.warrantyApplied ? '"SI"' : '"NO"',
+        `"${log.warrantyReason || ''}"`,
         `"${log.branchName}"`,
         `"${log.branchSirh || 'N/A'}"`, 
-        `"${log.branchRegion || 'N/A'}"`, // New
+        `"${log.branchRegion || 'N/A'}"`,
         `"${item.device}"`,
         `"${item.model}"`,
         item.quantity,
@@ -65,7 +73,7 @@ export const InstallationHistory: React.FC<InstallationHistoryProps> = ({ logs }
   };
 
   return (
-    <div className="bg-[#27548A]/85 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20">
+    <div className="bg-[#27548A]/40 backdrop-blur-sm p-6 rounded-lg shadow-lg border border-[#DDA853]/20">
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <h2 className="text-2xl font-bold text-[#DDA853] flex items-center gap-2">
           <FileText size={24} /> Historial de Instalaciones
@@ -85,8 +93,9 @@ export const InstallationHistory: React.FC<InstallationHistoryProps> = ({ logs }
             <tr>
               <th className="px-6 py-3 text-left text-xs font-bold text-[#DDA853] uppercase tracking-wider">Fecha Inst.</th>
               <th className="px-6 py-3 text-left text-xs font-bold text-[#DDA853] uppercase tracking-wider">Sucursal / Región</th>
-              <th className="px-6 py-3 text-left text-xs font-bold text-[#DDA853] uppercase tracking-wider">Folio / Ticket</th>
+              <th className="px-6 py-3 text-left text-xs font-bold text-[#DDA853] uppercase tracking-wider">Identificadores</th>
               <th className="px-6 py-3 text-left text-xs font-bold text-[#DDA853] uppercase tracking-wider">Técnico</th>
+              <th className="px-6 py-3 text-left text-xs font-bold text-[#DDA853] uppercase tracking-wider">Garantía</th>
               <th className="px-6 py-3 text-left text-xs font-bold text-[#DDA853] uppercase tracking-wider">Items</th>
             </tr>
           </thead>
@@ -107,20 +116,36 @@ export const InstallationHistory: React.FC<InstallationHistoryProps> = ({ logs }
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-[#DDA853]">
-                    {log.folioComexa && <div className="text-xs font-bold text-[#8CE4FF]">Folio: {log.folioComexa}</div>}
-                    <div className="text-xs">SCTASK: {log.sctask}</div>
+                    <div className="text-xs font-bold text-white mb-1">CMX: {log.folioComexa}</div>
+                    {log.sbo && <div className="text-xs font-bold text-[#8CE4FF]">SBO: {log.sbo}</div>}
+                    {log.ticket && <div className="text-xs font-bold text-yellow-500">Ticket: {log.ticket}</div>}
+                    {log.sctask && <div className="text-xs">SCTASK: {log.sctask}</div>}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-[#DDA853]">
                     <div className="flex items-center gap-2">
                       <User size={14} className="text-[#DDA853]/60"/> {log.technicianName}
                     </div>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    {log.warrantyApplied ? (
+                      <div className="flex flex-col">
+                         <span className="flex items-center gap-1 text-red-400 font-bold"><ShieldAlert size={14}/> SÍ</span>
+                         <span className="text-xs text-[#DDA853]/60 max-w-[150px] truncate" title={log.warrantyReason}>{log.warrantyReason}</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col">
+                        <span className="flex items-center gap-1 text-green-400 font-bold"><ShieldCheck size={14}/> NO</span>
+                        <span className="text-xs text-[#DDA853]/60 max-w-[150px] truncate" title={log.warrantyReason}>{log.warrantyReason}</span>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-6 py-4 text-sm text-[#DDA853]">
                     <div className="flex flex-col gap-1">
                       {log.itemsUsed.slice(0, 2).map((item, idx) => (
-                        <span key={idx} className="text-xs bg-[#1E406A] px-2 py-1 rounded border border-[#DDA853]/20">
-                          {item.quantity}x {item.device}
-                        </span>
+                        <div key={idx} className="flex items-center justify-between gap-2 text-xs bg-[#1E406A] px-2 py-1 rounded border border-[#DDA853]/20">
+                          <span>{item.quantity}x {item.device}</span>
+                          <span className="opacity-50 text-[10px] uppercase">{item.usageType}</span>
+                        </div>
                       ))}
                       {log.itemsUsed.length > 2 && (
                         <span className="text-xs text-[#DDA853]/60 italic">+{log.itemsUsed.length - 2} más...</span>
@@ -131,7 +156,7 @@ export const InstallationHistory: React.FC<InstallationHistoryProps> = ({ logs }
               ))
             ) : (
               <tr>
-                <td colSpan={5} className="px-6 py-10 text-center text-[#DDA853]/70">
+                <td colSpan={6} className="px-6 py-10 text-center text-[#DDA853]/70">
                   No hay instalaciones registradas aún.
                 </td>
               </tr>
